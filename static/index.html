@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Travel Disruption Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+  :root {
+    /* Red brand theme */
+    --bg: #faf5f5; --panel: #ffffff; --ink: #221a1a; --muted: #6b5c5c; --line: #ecdcdc;
+    --accent: #b3141b; --accent-ink: #fff;          /* brand red: Assess button, focus, headings accents */
+    --mode-on: #1e5fd6; --mode-on-ink: #fff;         /* selected travel mode (blue) */
+    --mode-off: #ffffff; --mode-off-ink: #4a3f3f;    /* unselected travel mode (white) */
+    --route: #3a3f4a; --link: #1e5fd6;
+    --field: #ffffff; --field-line: #dccaca; --field-line-hover: #b9a3a3; --focus-ring: rgba(179, 20, 27, .18);
+    --mode-hover: #eef3fd;
+    /* Risk scale, green -> red: Minimal, Low, Moderate, High */
+    --s0: #1e8e3e; --s1: #9a8a00; --s2: #e06d00; --s3: #d11a1a;
+    --s0-bg: #e6f4ea; --s1-bg: #f7f3d6; --s2-bg: #fdebd9; --s3-bg: #fbe1e1;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #170f10; --panel: #221718; --ink: #f1e9e9; --muted: #b3a2a2; --line: #3a2a2b;
+      --accent: #e5484d; --accent-ink: #fff;
+      --mode-on: #4a8cff; --mode-on-ink: #fff;
+      --mode-off: #f5f5f5; --mode-off-ink: #2a2222;
+      --route: #c9ced8; --link: #7fb0ff;
+      --field: #2a1d1e; --field-line: #4a3638; --field-line-hover: #6b5052; --focus-ring: rgba(229, 72, 77, .25);
+      --mode-hover: #e8eefb;
+      --s0: #4cc070; --s1: #d9c64a; --s2: #ff9a3c; --s3: #ff5c5c;
+      --s0-bg: #15301e; --s1-bg: #33300f; --s2-bg: #3d2511; --s3-bg: #401818;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .tag { font: 500 11px/1 "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .06em;
+         padding: 5px 8px; border-radius: 99px; background: var(--s0-bg); color: var(--muted); }
+  .tag.demo { background: var(--s2-bg); color: var(--s2); }
+  .sub { color: var(--muted); margin: 0; flex-basis: 100%; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  form { display: grid; grid-template-columns: 1fr 1fr 170px 170px auto; gap: 12px; align-items: end; }
+  label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px;
+          text-transform: uppercase; letter-spacing: .06em; }
+
+  /* Input fields: white, clear border, leading icon, soft focus ring */
+  .field { position: relative; }
+  .field svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px;
+               color: var(--muted); pointer-events: none; }
+  input { width: 100%; height: 46px; padding: 0 12px 0 40px; border: 1.5px solid var(--field-line); border-radius: 10px;
+          background: var(--field); color: var(--ink); font: 500 15px "IBM Plex Sans", sans-serif;
+          box-shadow: 0 1px 2px rgba(0,0,0,.04); transition: border-color .15s, box-shadow .15s; }
+  input[type="date"] { padding-left: 40px; color-scheme: light dark; }
+  input::placeholder { color: var(--muted); font-weight: 400; }
+  input:hover { border-color: var(--field-line-hover); }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--focus-ring); }
+  .field:focus-within svg { color: var(--accent); }
+
+  /* Fly / Drive toggle with an outline around the group and a divider */
+  .seg { display: flex; height: 46px; border: 1.5px solid var(--mode-on); border-radius: 10px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; background: var(--mode-off); color: var(--mode-off-ink);
+                font: 500 15px "IBM Plex Sans", sans-serif; cursor: pointer; transition: background .15s, color .15s; }
+  .seg button + button { border-left: 1.5px solid var(--mode-on); }
+  .seg button:not(.on):hover { background: var(--mode-hover); }
+  .seg button.on { background: var(--mode-on); color: var(--mode-on-ink); font-weight: 600; }
+  .seg button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
+
+  .go { padding: 0 22px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+        font: 600 15px "IBM Plex Sans", sans-serif; cursor: pointer; height: 46px;
+        box-shadow: 0 2px 6px var(--focus-ring); transition: transform .15s, filter .15s; }
+  .go:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .go:disabled { opacity: .6; cursor: progress; }
+  h1 { color: var(--accent); }
+  .examples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .examples span { font-size: 12px; color: var(--muted); }
+  .chip { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 99px; padding: 4px 10px;
+          font: 13px "IBM Plex Sans", sans-serif; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); }
+  .chip .cdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
+                background: var(--line); vertical-align: 1px; }
+  .chip.loading .cdot { animation: pulse 1s ease-in-out infinite; }
+  .chip.rated { border-color: var(--c); background: var(--cb); }
+  .chip.rated .cdot { background: var(--c); }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .err { margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: var(--s3-bg); color: var(--s3); display: none; }
+  #out { display: none; margin-top: 18px; }
+  .verdict { display: grid; grid-template-columns: 180px 1fr; gap: 20px; border-left: 6px solid var(--lvl); }
+  .level { font-size: 30px; font-weight: 600; color: var(--lvl); line-height: 1.1; }
+  .meter { height: 8px; border-radius: 99px; background: var(--s0-bg); margin: 10px 0 6px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--lvl); border-radius: 99px; }
+  .small { font-size: 13px; color: var(--muted); }
+  .headline { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  .summary { margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn2 { border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 8px; padding: 6px 10px;
+          font: 13px "IBM Plex Sans", sans-serif; cursor: pointer; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  ol.actions { margin: 0; padding-left: 20px; }
+  ol.actions li { margin-bottom: 8px; }
+
+  /* Recommended action takes the risk colour so it stands out */
+  /* Only the badge next to the title carries the risk colour; the card itself stays neutral */
+  .act h2 { display: flex; align-items: center; gap: 10px; }
+  .act .badge { font: 600 11px/1 "IBM Plex Mono", monospace; padding: 5px 8px; border-radius: 6px;
+                background: var(--lvl); color: #fff; letter-spacing: .06em; }
+
+  /* Cards grow slightly on hover and return to normal when the pointer leaves */
+  .hov { position: relative; transition: transform .2s ease, box-shadow .2s ease; }
+  .hov:hover { transform: scale(1.015); box-shadow: 0 10px 28px rgba(0,0,0,.10); z-index: 2; }
+  .lift { transition: box-shadow .2s ease; }
+  .lift:hover { box-shadow: 0 10px 28px rgba(0,0,0,.10); }   /* map card: shadow only - scaling breaks map clicks */
+  .chip { transition: transform .15s ease; }
+  .chip:hover { transform: scale(1.05); }
+  @media (prefers-reduced-motion: reduce) { .hov, .hov:hover, .chip:hover, .go:hover { transform: none; } }
+
+  /* Map, with a full-view mode */
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .panel-head h2 { margin: 0; }
+  #map { height: 380px; border-radius: 8px; border: 1px solid var(--line); }
+  .mapcard.fullview { position: fixed; inset: 0; z-index: 1000; border-radius: 0; display: flex; flex-direction: column; }
+  .mapcard.fullview #map { flex: 1; height: auto; }
+  body.noscroll { overflow: hidden; }
+  .cps { list-style: none; margin: 0; padding: 0; }
+  .cps li { display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: start; }
+  .cps li:last-child { border-bottom: 0; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; background: var(--c); }
+  .cpname { font-weight: 500; }
+  .sev { font: 500 11px/1 "IBM Plex Mono", monospace; text-transform: uppercase; padding: 4px 7px; border-radius: 5px;
+         color: var(--c); background: var(--cb); white-space: nowrap; }
+  .finding { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .finding:last-child { border-bottom: 0; }
+  .ftitle { font-weight: 600; }
+  .src { font: 12px "IBM Plex Mono", monospace; color: var(--muted); }
+  .src a { color: var(--link); }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td.mono { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .ok { color: var(--s0); } .bad { color: var(--s3); }
+  ul.plain { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .full { grid-column: 1 / -1; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent;
+             border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 860px) {
+    form { grid-template-columns: 1fr 1fr; }
+    .go { grid-column: 1 / -1; }
+    .grid, .verdict { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) { form { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Travel Disruption Radar</h1>
+    <span class="tag" id="modeTag">Live data</span>
+    <p class="sub">Enter a U.S. trip. We check official weather alerts, two independent forecasts and live FAA airport status, then score the risk and explain why.</p>
+  </header>
+
+  <section class="panel">
+    <form id="f" autocomplete="off">
+      <div><label for="origin">From</label>
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></svg>
+          <input id="origin" required placeholder="City, ST or airport code" value="New York">
+        </div></div>
+      <div><label for="destination">To</label>
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+          <input id="destination" required placeholder="City, ST or airport code" value="San Francisco">
+        </div></div>
+      <div><label for="date">Date</label>
+        <div class="field">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          <input id="date" type="date" required>
+        </div></div>
+      <div><label>Mode</label>
+        <div class="seg" role="radiogroup">
+          <button type="button" data-mode="fly" class="on" role="radio" aria-checked="true">Fly</button>
+          <button type="button" data-mode="drive" role="radio" aria-checked="false">Drive</button>
+        </div>
+      </div>
+      <button class="go" id="go" type="submit">Assess trip</button>
+    </form>
+    <div class="examples"><span>Try:</span>
+      <button class="chip" data-ex="New York|San Francisco|1|fly">New York → San Francisco, tomorrow</button>
+      <button class="chip" data-ex="JFK|DEN|1|fly">JFK → DEN, tomorrow</button>
+      <button class="chip" data-ex="Chicago|Denver|1|drive">Chicago → Denver, drive</button>
+      <button class="chip" data-ex="Boston|Miami|0|fly">Boston → Miami, today</button>
+      <button class="chip" data-ex="Seattle|Atlanta|9|fly">Seattle → Atlanta, 9 days out</button>
+    </div>
+    <div class="err" id="err"></div>
+  </section>
+
+  <div id="out">
+    <section class="panel verdict hov" id="verdict">
+      <div>
+        <div class="small">Disruption risk</div>
+        <div class="level" id="level"></div>
+        <div class="meter"><i id="meter"></i></div>
+        <div class="small"><span id="score"></span>/100 · Confidence <b id="conf"></b></div>
+      </div>
+      <div>
+        <p class="headline" id="headline"></p>
+        <p class="summary" id="summary"></p>
+        <div class="row">
+          <span class="tag" id="sumby"></span>
+          <span class="small" id="tripmeta"></span>
+          <button class="btn2" id="copy" type="button">Copy briefing</button>
+        </div>
+        <details><summary>Why this confidence?</summary><ul class="plain" id="confwhy"></ul></details>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="panel act hov" id="actPanel"><h2>Recommended action <span class="badge" id="actBadge"></span></h2>
+        <ol class="actions" id="actions"></ol></section>
+      <section class="panel lift mapcard" id="mapCard">
+        <div class="panel-head"><h2>Route</h2>
+          <button class="btn2" id="mapFull" type="button" aria-pressed="false">⤢ Full view</button></div>
+        <div id="map"></div></section>
+      <section class="panel hov"><h2>Checkpoints</h2><ul class="cps" id="cps"></ul></section>
+      <section class="panel hov"><h2>Evidence</h2><div id="findings"></div>
+        <details id="infoWrap"><summary id="infoSum"></summary><div id="infoFindings"></div></details>
+      </section>
+      <section class="panel full hov"><h2>Assumptions &amp; limits</h2><ul class="plain" id="assumptions"></ul></section>
+      <section class="panel full hov"><h2>Sources checked</h2>
+        <p class="small" id="srcNote" style="margin:-4px 0 10px"></p>
+        <table><thead><tr><th>Source</th><th>For</th><th>Status</th><th>Time</th></tr></thead><tbody id="sources"></tbody></table>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const SEV = ["Info", "Low", "Moderate", "High"];
+const LVL = { Minimal: 0, Low: 1, Moderate: 2, High: 3 };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let mode = "fly", map, layer, last;
+
+function isoDate(offset) {
+  const d = new Date(); d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+$("date").value = isoDate(1);
+$("date").min = isoDate(0);
+$("date").max = isoDate(15);
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll(".seg button").forEach((b) => {
+    const on = b.dataset.mode === m; b.classList.toggle("on", on); b.setAttribute("aria-checked", on);
+  });
+}
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+document.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
+  const [o, d, off, m] = c.dataset.ex.split("|");
+  $("origin").value = o; $("destination").value = d; $("date").value = isoDate(+off); setMode(m);
+  $("f").requestSubmit();
+}));
+
+// Pre-assess each example in the background so its chip shows the real current risk colour.
+async function rateChips() {
+  await Promise.all([...document.querySelectorAll(".chip")].map(async (c) => {
+    const [o, d, off, m] = c.dataset.ex.split("|");
+    if (!c.querySelector(".cdot")) c.insertAdjacentHTML("afterbegin", '<span class="cdot"></span>');
+    c.classList.add("loading");
+    try {
+      const r = await fetch("/api/assess", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: o, destination: d, date: isoDate(+off), mode: m }),
+      });
+      if (!r.ok) throw new Error();
+      const a = await r.json();
+      const s = LVL[a.level];
+      c.style.cssText = sevStyle(s);
+      c.classList.add("rated");
+      c.title = `${a.level} risk (${a.score}/100) — click for details`;
+    } catch {
+      c.title = "Couldn't pre-check this route — click to try";
+    } finally {
+      c.classList.remove("loading");
+    }
+  }));
+}
+rateChips();
+
+fetch("/api/health").then((r) => r.json()).then((h) => {
+  if (h.demo_mode) { $("modeTag").textContent = "Demo data"; $("modeTag").classList.add("demo"); }
+}).catch(() => {});
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const go = $("go");
+  go.disabled = true; go.innerHTML = '<span class="spinner"></span>Checking sources…';
+  $("err").style.display = "none";
+  $("out").style.display = "none";  // never show a previous trip's results under a new error
+  try {
+    const r = await fetch("/api/assess", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin: $("origin").value, destination: $("destination").value, date: $("date").value, mode }),
+    });
+    const text = await r.text();
+    let body;
+    try { body = JSON.parse(text); }
+    catch { throw new Error(`Server error (${r.status}). Check the terminal running the app for details.`); }
+    if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Please check the inputs.");
+    render(body);
+  } catch (err) {
+    $("err").textContent = err.message || "Something went wrong.";
+    $("err").style.display = "block";
+  } finally {
+    go.disabled = false; go.textContent = "Assess trip";
+  }
+});
+
+function ago(sec) {
+  if (sec == null) return "earlier";
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+  return `${Math.round(sec / 3600)} h ago`;
+}
+function sevStyle(s) { return `--c:var(--s${s});--cb:var(--s${s}-bg)`; }
+
+function findingHTML(f) {
+  return `<div class="finding">
+    <div><span class="sev" style="${sevStyle(f.severity)}">${SEV[f.severity]}</span></div>
+    <div>
+      <div class="ftitle">${esc(f.title)}</div>
+      <div class="small">${esc(f.checkpoint_label)}${f.window ? " · " + esc(f.window) : ""}</div>
+      <div>${esc(f.detail)}</div>
+      <div class="src">Source: ${f.source_url ? `<a href="${esc(f.source_url)}" target="_blank" rel="noopener">${esc(f.source)}</a>` : esc(f.source)}</div>
+    </div></div>`;
+}
+
+function render(a) {
+  last = a;
+  const lv = LVL[a.level];
+  $("verdict").style.setProperty("--lvl", `var(--s${lv})`);
+  $("level").textContent = a.level;
+  $("meter").style.width = `${a.score}%`;
+  $("score").textContent = a.score;
+  $("conf").textContent = a.confidence;
+  $("headline").textContent = a.headline;
+  $("summary").textContent = a.summary;
+  $("sumby").textContent = a.summary_by === "llm" ? "Summary: AI-written from findings" : "Summary: rule-based";
+  const d = new Date(a.request.date + "T12:00:00");
+  $("tripmeta").textContent = `${a.origin.name} → ${a.destination.name} · ${d.toDateString()} · ${a.request.mode === "fly" ? "Flight" : "Drive"} · ${a.days_ahead === 0 ? "today" : a.days_ahead + " day(s) out"}`;
+  $("confwhy").innerHTML = a.confidence_reasons.map((r) => `<li>${esc(r)}</li>`).join("");
+  $("actions").innerHTML = a.actions.map((x) => `<li>${esc(x)}</li>`).join("");
+  $("actPanel").style.setProperty("--lvl", `var(--s${lv})`);
+  $("actPanel").style.setProperty("--lvl-bg", `var(--s${lv}-bg)`);
+  $("actBadge").textContent = `${a.level} risk`;
+
+  $("cps").innerHTML = a.checkpoints.map((c) => `<li style="${sevStyle(c.max_severity)}">
+    <span class="dot"></span>
+    <div><div class="cpname">${esc(c.label)}</div>
+      <div class="small">${esc(c.conditions || "No forecast text")}${c.temp_range_f ? " · " + esc(c.temp_range_f) : ""} · ${esc(c.date)}${c.eta_hours ? ` · ~${c.eta_hours} h in` : ""}</div></div>
+    <span class="sev">${SEV[c.max_severity]}</span></li>`).join("");
+
+  const main = a.findings.filter((f) => f.severity >= 1);
+  const info = a.findings.filter((f) => f.severity === 0);
+  $("findings").innerHTML = main.length ? main.map(findingHTML).join("")
+    : `<p class="small">No travel-relevant hazards found in any source.</p>`;
+  $("infoWrap").style.display = info.length ? "block" : "none";
+  $("infoSum").textContent = `${info.length} item(s) checked and judged not travel-relevant`;
+  $("infoFindings").innerHTML = info.map(findingHTML).join("");
+
+  $("assumptions").innerHTML = a.assumptions.map((x) => `<li>${esc(x)}</li>`).join("");
+  $("sources").innerHTML = a.sources.map((s) => `<tr>
+    <td>${esc(s.source)}</td><td>${esc(s.target)}</td>
+    <td class="${s.ok ? "ok" : "bad"}">${s.ok ? (s.cached ? `OK <span class="small">· from cache, fetched ${ago(s.age_s)}</span>` : "OK · live") : "Failed: " + esc(s.error)}</td>
+    <td class="mono">${s.cached ? `0 ms <span class="small">(was ${s.ms} ms)</span>` : s.ms + " ms"}</td></tr>`).join("");
+  const live = a.sources.filter((s) => !s.cached).length;
+  $("srcNote").textContent = `${a.sources.length} lookups · ${live} fetched live · ${a.sources.length - live} reused from cache ` +
+    `(recent identical requests are reused for 2 min–1 day depending on the source, to stay fast and avoid overloading free public APIs).`;
+
+  $("out").style.display = "block";
+  drawMap(a);
+  $("out").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function drawMap(a) {
+  if (!window.L) { $("map").innerHTML = '<p class="small" style="padding:12px">Map library unavailable.</p>'; return; }
+  if (!map) {
+    map = L.map("map", { scrollWheelZoom: false });
+    // OpenStreetMap's standard tiles: free, no API key; fine for a low-traffic prototype.
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(map);
+  }
+  if (layer) layer.remove();
+  layer = L.featureGroup().addTo(map);
+  const line = a.route ? a.route.geometry.map(([lon, lat]) => [lat, lon]) : a.checkpoints.map((c) => [c.lat, c.lon]);
+  L.polyline(line, { color: cssVar("--route"), weight: 4, opacity: .8, dashArray: a.route ? null : "8 8" }).addTo(layer);
+  a.checkpoints.forEach((c) => {
+    L.circleMarker([c.lat, c.lon], {
+      radius: c.role === "en_route" ? 7 : 10, weight: 2, color: "#fff",
+      fillColor: cssVar(`--s${c.max_severity}`), fillOpacity: 1,
+    }).bindTooltip(`${esc(c.label)} — ${SEV[c.max_severity]}`).addTo(layer);
+  });
+  setTimeout(() => { map.invalidateSize(); map.fitBounds(layer.getBounds(), { padding: [30, 30] }); }, 50);
+}
+
+// Full-view map: expands the map card to fill the window; Esc or the button returns it.
+function setMapFull(on) {
+  $("mapCard").classList.toggle("fullview", on);
+  document.body.classList.toggle("noscroll", on);
+  $("mapFull").textContent = on ? "✕ Exit full view" : "⤢ Full view";
+  $("mapFull").setAttribute("aria-pressed", on);
+  if (map) setTimeout(() => { map.invalidateSize(); if (layer) map.fitBounds(layer.getBounds(), { padding: [40, 40] }); }, 60);
+}
+$("mapFull").addEventListener("click", () => setMapFull(!$("mapCard").classList.contains("fullview")));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("mapCard").classList.contains("fullview")) setMapFull(false); });
+
+$("copy").addEventListener("click", async () => {
+  if (!last) return;
+  const a = last;
+  const lines = [
+    `TRAVEL RISK: ${a.level.toUpperCase()} (${a.score}/100, confidence ${a.confidence})`,
+    `${a.origin.name} → ${a.destination.name}, ${a.request.date}, ${a.request.mode}`,
+    "", a.summary, "", "Recommended action:", ...a.actions.map((x) => `- ${x}`),
+    "", "Evidence:", ...a.findings.filter((f) => f.severity >= 1).map((f) => `- [${SEV[f.severity]}] ${f.title} @ ${f.checkpoint_label} (${f.source})`),
+  ];
+  try { await navigator.clipboard.writeText(lines.join("\n")); $("copy").textContent = "Copied"; }
+  catch { $("copy").textContent = "Copy failed"; }
+  setTimeout(() => ($("copy").textContent = "Copy briefing"), 1500);
+});
+</script>
+</body>
+</html>
